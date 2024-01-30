@@ -1712,17 +1712,3 @@ Proof.
   specialize (weak_head_ite2_eq _ H0 _ H E u); intro.
   apply H1; reflexivity.
 Qed.
-
-(** This last result will also be useful, and uses the weak
-    standardization.*)
-
-Lemma SN_lift_fill : forall (E : Elim) (t : term) (k n : nat),
-  SN (E [ₑ t]) -> SN (E [ₑ lift k n t]).
-Proof.
-  apply (induction_ext (fun E => forall (t : term) (k n : nat),
-                            SN (E [ₑ t])
-                            -> SN (E [ₑ lift k n t])))
-  ; intros; simpl; simpl in H; try (rewrite compose_fill; simpl);
-    try (rewrite compose_fill in H0; simpl in H0).
-  7 :{
-Admitted.

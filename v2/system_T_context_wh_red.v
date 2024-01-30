@@ -108,23 +108,6 @@ Proof.
   induction E; intros; simpl; f_equal; apply IHE.
 Qed.
 
-Lemma induction_ext : forall (P : Elim -> Prop),
-    P hole -> (forall (E : Elim) (t : term),
-                  P E -> P (E ∘ₑ apli hole t)) ->
-    (forall E : Elim, P E -> P (E ∘ₑ proj1 hole)) ->
-    (forall E : Elim, P E -> P (E ∘ₑ proj2 hole)) ->
-    (forall (E : Elim) (t u : term),
-        P E -> P (E ∘ₑ cases t u hole)) ->
-    (forall E : Elim, P E -> P (E ∘ₑ casebot hole)) ->
-    (forall (E : Elim) (t u : term), P E ->
-                                     P (E ∘ₑ recel t u hole)) ->
-    (forall (E : Elim) (t u : term), P E ->
-                                     P (E ∘ₑ ifel hole t u)) ->
-    forall E : Elim, P E.
-Proof.
-  intros. induction E. apply H.
-Admitted.
-
 Lemma compose_fill : forall (E F : Elim) (t : term),
     E ∘ₑ F [ₑ t ] = E [ₑ F [ₑ t]].
 Proof.
@@ -232,20 +215,6 @@ Proof.
   apply (SNE_stable_βE _ _ H H1).
 Qed.
 
-Inductive induc_SNE : Elim -> Prop :=
-| expansionE : forall (E : Elim),
-    (forall (F : Elim), E ⊳ₑ F -> induc_SNE F) -> induc_SNE E.
-
-Lemma equiv_SNE_induc : forall (E : Elim), SNE E <-> induc_SNE E.
-Proof.
-  intro; split; intro.
-  - induction H.
-    + split; intros. inversion H.
-    + induction IHSNE. split; intros. inversion H3. apply H2.
-      apply H7.
-      apply (SNE_stable_βE _ _ H) in H7. apply H7. clear H1 H2.
-Admitted.
-
 Lemma βE_to_β : forall (E F : Elim) (t : term),
     E ⊳ₑ F -> E [ₑ t] ⊳ F [ₑ t].
 Proof.
@@ -323,22 +292,204 @@ Proof.
   apply ifelSN. apply IHE. apply H0. apply H.
 Qed.
 
-(**
-Lemma SNELiftSNE_eq : forall (k n : nat) (E : Elim), SNE E -> forall (F : Elim),
-  E = liftE k n F -> SNE F.
+Fixpoint flatten (t : term) (k : nat) : term :=
+  match t with
+  | {{n}} => if n <? k then {{n}} else {{k}}
+  | u @ₜ v => flatten u k @ₜ flatten v k
+  | λₜ u => λₜ (flatten u (1 + k))
+  | ⟨ u , v ⟩ => ⟨ flatten u k, flatten v k ⟩
+  | π₁ u => π₁ (flatten u k)
+  | π₂ u => π₂ (flatten u k)
+  | star => star
+  | zero => zero
+  | Sₜ u => Sₜ (flatten u k)
+  | Recₜ u v w => Recₜ (flatten u k) (flatten v k) (flatten w k)
+  | Tt => Tt
+  | Ff => Ff
+  | IfThenElse u v w =>
+      IfThenElse (flatten u k) (flatten v k) (flatten w k)
+  | κ₁ u => κ₁ (flatten u k)
+  | κ₂ u => κ₂ (flatten u k)
+  | delta u v w => delta (flatten u (1 + k)) (flatten v (1 + k))
+                     (flatten w k)
+  | δb u => δb (flatten u k)
+  end.
+
+Fixpoint ctx_flatten (E : Elim) (k : nat) : Elim :=
+  match E with
+  | hole => hole
+  | apli E t => apli (ctx_flatten E k) (flatten t k)
+  | proj1 E => proj1 (ctx_flatten E k)
+  | proj2 E => proj2 (ctx_flatten E k)
+  | ifel E t u =>
+      ifel (ctx_flatten E k) (flatten t k) (flatten u k)
+  | recel t u E =>
+      recel (flatten t k) (flatten u k) (ctx_flatten E k)
+  | cases t u E =>
+      cases (flatten t (S k)) (flatten u (S k)) (ctx_flatten E k)
+  | casebot E => casebot (ctx_flatten E k)
+  end.
+
+Lemma ctx_flatten_comm : forall (E : Elim) (t : term) (k : nat),
+    flatten (E [ₑ t]) k = (ctx_flatten E k) [ₑ flatten t k].
 Proof.
-intros k n E H; generalize k n; clear k n; induction H; intros; simpl.
- - induction F; try inversion H. apply holeSN.
- - 
+  induction E; intros; simpl; try rewrite IHE;
+    try (rewrite IHE1; rewrite IHE2; try rewrite IHE3);
+    try reflexivity.
+Qed.
+
+Lemma lift_flatten_inf : forall (k n p : nat) (t : term),
+    p <= k -> flatten (lift k n t) p = flatten t p.
+Proof.
+  intros; generalize k n p H; clear k n p H; induction t;
+    simpl; intros; try (f_equal; apply IHt; apply H);
+    try (rewrite IHt1; try apply H; rewrite IHt2; try apply H;
+         try (rewrite IHt3; try apply H); reflexivity);
+    try reflexivity.
+  2 :{ f_equal. apply IHt. apply -> Nat.succ_le_mono. apply H. }
+  2 :{ f_equal; try (apply IHt1;
+                     apply -> Nat.succ_le_mono; apply H);
+       try (apply IHt2; apply -> Nat.succ_le_mono; apply H);
+       try apply IHt3; apply H. }
+  - case (n <? p) eqn : H0. apply Nat.ltb_lt in H0.
+    apply (Nat.lt_le_trans _ _ _ H0) in H.
+    apply Nat.ltb_lt in H. rewrite H. apply Nat.ltb_lt in H0.
+    simpl. rewrite H0. reflexivity.
+    case (n <? k) eqn : H1. simpl; rewrite H0; reflexivity.
+    simpl. apply Nat.ltb_ge in H0.
+    apply (Nat.add_le_mono 0 n0 p n (le_0_n _)) in H0.
+    simpl in H0. apply Nat.ltb_ge in H0. rewrite H0.
+    reflexivity.
+Qed.
+
+Lemma lift_flatten_0 : forall (k n : nat) (t : term),
+    flatten (lift k n t) 0 = flatten t 0.
+Proof.
+  intros. apply lift_flatten_inf. apply le_0_n.
+Qed.
+
+Lemma lift_flatten_comm : forall (k n p : nat) (t : term),
+    flatten (lift k n t) (p + n) = lift k n (flatten t p).
+Proof.
+  intros k n p t; generalize k n p; clear k n p; induction t;
+    simpl; intros; try reflexivity;
+    try (rewrite <- IHt; reflexivity);
+    try (rewrite <- IHt1; rewrite <- IHt2; try rewrite <- IHt3;
+         reflexivity).
+  case (n <? k) eqn : H.
+  - case (n <? p) eqn : H0.
+    + simpl. rewrite H. apply Nat.ltb_lt in H0.
+      apply (Nat.lt_lt_add_r _ _ n0) in H0.
+      apply Nat.ltb_lt in H0. rewrite H0. reflexivity.
+    + simpl. 
 Admitted.
-*)
+
+Lemma flatten_subst : forall (k n : nat) (t u : term),
+    k <= n ->
+    flatten ({k ~> u} t) n =
+      {k ~> flatten u n} (flatten t (S n)).
+Proof.
+  intros k n t; generalize k n; clear k n; induction t; intros.
+  2 :{ simpl. f_equal. rewrite IHt. f_equal.
+       rewrite <- lift_flatten_comm. rewrite Nat.add_comm; simpl.
+       reflexivity.
+       apply -> Nat.succ_le_mono. apply H. }
+  - simpl. case (n0 =? k) eqn : H0.
+    + apply Nat.eqb_eq in H0. case (k =? n) eqn : H1.
+      apply Nat.eqb_eq in H1. rewrite H1.
+      rewrite <- H0 in H1. symmetry in H1.
+      apply Nat.eq_le_incl in H1. apply Nat.ltb_ge in H1.
+(*      rewrite H1. simpl. rewrite Nat.eqb_refl. reflexivity.
+      assert (k < n). apply Lt.le_lt_or_eq_stt in H.
+      destruct H. apply H. apply Nat.eqb_neq in H1.
+      apply H1 in H; inversion H.
+      rewrite <- H0 in H2. apply Nat.ltb_lt in H2.
+      rewrite H2. rewrite H0. simpl. rewrite Nat.eqb_refl.
+      reflexivity.
+    + case (n0 <? k) eqn : H1.
+      ++ apply Nat.ltb_lt in H1.
+         specialize (Nat.lt_le_trans _ _ _ H1 H); intro.
+         apply Nat.ltb_lt in H2. rewrite H2.
+         simpl. rewrite H2. rewrite H0. apply Nat.ltb_lt in H1.
+         rewrite H1. reflexivity.
+      ++ case (n0 <? n) eqn : H2.
+      -- simpl. rewrite H0. rewrite H1. rewrite Nat.sub_1_r.
+         apply Nat.ltb_lt in H2. apply Nat.lt_lt_pred in H2.
+         apply Nat.ltb_lt in H2. rewrite H2. reflexivity.
+      -- apply Nat.ltb_ge in H2. apply Nat.ltb_ge in H1.
+         apply Nat.eqb_neq in H0. assert (k < n0).
+         apply Lt.le_lt_or_eq_stt in H1. destruct H1.
+         apply H1. symmetry in H1. apply H0 in H1; inversion H1.
+         simpl. *)
+Admitted.
+
+Lemma reduc_flatten : forall (t u : term) (k : nat),
+    t ⊳ u -> flatten t k ⊳ flatten u k.
+Proof.
+  intros.
+  generalize k; clear k; induction H; intros;
+    simpl; try constructor;
+    try apply IHβred;
+    try (rewrite flatten_subst; try constructor; apply le_0_n).
+Qed.
+
+Lemma flatten_reduc : forall (t u : term) (k : nat),
+    flatten t k ⊳ u -> exists (v : term),
+      u = flatten v k /\ t ⊳ v.
+Proof.
+  induction t; intros; simpl.
+  - simpl in H. case (n <? k) eqn : H0; inversion H.
+  - inversion H. apply IHt in H1. destruct H1.
+    destruct H1. rewrite H1. exists (λₜ x). simpl. split.
+    reflexivity. constructor. apply H3.
+  - simpl in H. inversion H.
+Admitted.
+
+Lemma SN_flatten_eq : forall (t : term) (k : nat),
+    SN t -> forall (u : term), t = flatten u k -> SN u.
+Proof.
+  intros t k H. induction H. intros.
+  split; intros. specialize (reduc_flatten _ _ k H2); intro.
+  rewrite <- H1 in H3. apply (H0 (flatten t2 k)). apply H3.
+  reflexivity.
+Qed.
+
+Lemma SN_flatten : forall (t : term) (k : nat),
+    SN t <-> SN (flatten t k).
+Proof.
+  intros; split; intro.
+  - induction H. split; intros.
+    assert (flatten t1 k ⊳ t2); try apply H1.
+    apply flatten_reduc in H2. destruct H2; destruct H2.
+    rewrite H2. apply H0. apply H3.
+  - apply (SN_flatten_eq (flatten t k) k H t (eq_refl _)).
+Qed.
+
+Lemma lift_ctx_SN : forall (E : Elim) (t : term) (k n : nat),
+    SN (E [ₑ t]) <-> SN (E [ₑ lift k n t]).
+Proof.
+  intros. split; intro.
+  apply <- (SN_flatten (E [ₑ lift k n t]) 0).
+  rewrite ctx_flatten_comm. rewrite lift_flatten_0.
+  rewrite <- ctx_flatten_comm. apply SN_flatten. apply H.
+  apply (SN_flatten _ 0). rewrite ctx_flatten_comm.
+  rewrite <- (lift_flatten_0 k n t). rewrite <- ctx_flatten_comm.
+  apply SN_flatten. apply H.
+Qed.
+
+Lemma SN_lift : forall (t : term) (k n : nat),
+    SN t <-> SN (lift k n t).
+Proof.
+  intros. specialize (lift_ctx_SN hole t k n); intro.
+  simpl in H. apply H.
+Qed.
 
 Lemma SNE_lift_SNE : forall (k n : nat) (E : Elim),
     SNE E -> SNE (liftE k n E).
 Proof.
   intros k n E H; generalize k n; clear k n; induction H; intros.
   - apply holeSN.
-  - apply appSNE. apply IHSNE. apply SN_lift_direct. apply H0.
+  - apply appSNE. apply IHSNE. apply SN_lift. apply H0.
   - apply proj1SN. apply IHSNE.
   - apply proj2SN. apply IHSNE.
   - apply casesSN; try apply SN_lift. apply H. apply H0.
@@ -467,12 +618,120 @@ Proof.
     simpl; reflexivity.
 Qed.
 
+Lemma reduc_decompt : forall (E : Elim) (n : nat) (t : term),
+    E [ₑ {{n}}] ⊳ t -> exists F : Elim, t = F [ₑ {{n}}].
+Proof.
+  induction E; simpl; intros; inversion H;
+    try (apply var_is_not_constr in H1; inversion H1);
+    try (apply var_is_not_constr in H3; inversion H3).
+  - apply IHE in H3. destruct H3. exists (apli x t).
+    simpl. f_equal. apply H3.
+  - exists (apli E t3). simpl. reflexivity.
+  - apply IHE in H1. destruct H1; exists (proj1 x).
+    simpl. f_equal. apply H1.
+  - apply IHE in H1. destruct H1; exists (proj2 x).
+    simpl. f_equal. apply H1.
+  - exists (cases t3 t0 E). reflexivity.
+  - exists (cases t t4 E). reflexivity.
+  - apply IHE in H4. destruct H4. exists (cases t t0 x).
+    simpl; rewrite H4. reflexivity.
+  - apply IHE in H1. destruct H1. exists (casebot x).
+    simpl; f_equal; apply H1.
+  - exists (recel t3 t0 E); simpl; reflexivity.
+  - exists (recel t t4 E); simpl; reflexivity.
+  - apply IHE in H4. destruct H4. exists (recel t t0 x).
+    simpl; f_equal; apply H4.
+  - apply IHE in H4. destruct H4. exists (ifel x t t0).
+    simpl; f_equal; apply H4.
+  - exists (ifel E t4 t0). simpl; reflexivity.
+  - exists (ifel E t t5); simpl; reflexivity.
+Qed.
+
+Lemma SNE_var_to : forall (t u : term),
+    SN t -> SN u -> forall (E : Elim) (n : nat),
+        u = E [ₑ {{n}}] -> SN (E [ₑ {{n}}] @ₜ t).
+Proof.
+  intros t u H; generalize u; clear u; induction H.
+  intros u H1; induction H1. intros.
+  split; intros. inversion H4.
+  apply var_is_not_constr in H6. inversion H6.
+  rewrite <- H3 in H8. specialize (H2 t4 H8). rewrite H3 in H8.
+  apply reduc_decompt in H8. destruct H8. specialize (H2 x n H8).
+  rewrite H8. apply H2.
+  assert (SN (E [ₑ {{n}}])). split; intros; apply H1.
+  rewrite H3. apply H9.
+  specialize (H0 t5 H8 (E [ₑ {{n}}]) H9 E n (eq_refl _)).
+  apply H0.
+Qed.
+
+Lemma SNE_var_p1 : forall (u : term),
+    SN u -> forall (E : Elim) (n : nat),
+      u = E [ₑ {{n}}] -> SN (π₁ (E [ₑ {{n}}])).
+Proof.
+  intros u H; induction H; intros; simpl.
+  split; intros. inversion H2.
+  + apply var_is_not_constr in H4. inversion H4.
+  + assert (t1 ⊳ t3). rewrite H1. apply H4.
+    apply reduc_decompt in H4. destruct H4. rewrite H4.
+    rewrite H4 in H6.
+    specialize (H0 (x [ₑ {{n}}]) H6 x n (eq_refl _)).
+    apply H0.
+Qed.
+
+Lemma SNE_var_p2 : forall (u : term),
+    SN u -> forall (E : Elim) (n : nat),
+      u = E [ₑ {{n}}] -> SN (π₂ (E [ₑ {{n}}])).
+Proof.
+  intros u H; induction H; intros; simpl.
+  split; intros. inversion H2.
+  + apply var_is_not_constr in H4. inversion H4.
+  + assert (t1 ⊳ t3). rewrite H1. apply H4.
+    apply reduc_decompt in H4. destruct H4. rewrite H4.
+    rewrite H4 in H6.
+    specialize (H0 (x [ₑ {{n}}]) H6 x n (eq_refl _)).
+    apply H0.
+Qed.
+
+Lemma SNE_var_de : forall (t u v : term),
+    SN t -> SN u -> SN v -> forall (E : Elim) (n : nat),
+        v = E [ₑ {{n}}] -> SN (delta t u (E [ₑ {{n}}])).
+Proof.
+Admitted.
+
+Lemma SNE_var_N : forall (t u v : term),
+    SN t -> SN u -> SN v -> forall (E : Elim) (n : nat),
+        v = E [ₑ {{n}}] -> SN (Recₜ t u (E [ₑ {{n}}])).
+Proof.
+Admitted.
+
+Lemma SNE_var_B : forall (t u v : term),
+    SN t -> SN u -> SN v -> forall (E : Elim) (n : nat),
+        v = E [ₑ {{n}}] -> SN (IfThenElse (E [ₑ {{n}}]) t u).
+Proof.
+Admitted.
+
 Lemma SNE_var_SN : forall (E : Elim) (n : nat),
     SNE E -> SN (E [ₑ {{n}}]).
 Proof.
-  intros. apply equiv_SNE_induc in H. induction H.
-  split; intros. apply var_fill_is_hole in H1. destruct H1.
-  destruct H1. rewrite H2. apply H0. apply H1.
+  induction E; intros; simpl.
+  - apply normal_form_SN; apply var_normal_form.
+  - inversion H. specialize (IHE n H2).
+    apply (SNE_var_to t (E [ₑ {{n}}]) H3 IHE E n (eq_refl _)).
+  - inversion H. specialize (IHE n H1).
+    apply (SNE_var_p1 (E [ₑ {{n}}]) IHE E n (eq_refl _)).
+  - inversion H. specialize (IHE n H1).
+    apply (SNE_var_p2 (E [ₑ {{n}}]) IHE E n (eq_refl _)).
+  - inversion H. specialize (IHE n H5).
+    apply (SNE_var_de t t0 (E [ₑ {{n}}]) H3 H4 IHE E n
+             (eq_refl _)).
+  - inversion H. specialize (IHE n H1). apply SN_deltaNil.
+    apply IHE.
+  - inversion H. specialize (IHE n H5).
+    apply (SNE_var_N t t0 (E [ₑ {{n}}]) H3 H4 IHE E n
+             (eq_refl _)).
+  - inversion H. specialize (IHE n H3).
+    apply (SNE_var_B t t0 (E [ₑ {{n}}]) H4 H5 IHE E n
+             (eq_refl _)).
 Qed.
 
 (** B. Weak head reduction.
@@ -686,37 +945,89 @@ Proof.
   apply (rt_add _ _ _ _ IHrt_closure). apply wh_lift. apply H0.
 Qed.
 
-Lemma elim_wh_decomp : forall (E F : Elim) (t u : term),
-    E [ₑ t] ⊳ₕ F [ₑ u] -> exists E' : Elim,
-      E = F ∘ₑ E' /\ E' [ₑ t] ⊳ₕ u.
-Proof.
-  intros E F; generalize E; clear E; induction F; intros;
-    simpl; simpl in H.
-  - exists E. split; try reflexivity. apply H.
-  - assert (exists E' : Elim, E = apli E' t). induction E. 
-Admitted.
+(** C. Flattening.
 
-Lemma elim_wh_decomp_star_eq : forall (t u : term),
-    t ⊳ₕ* u -> forall (E F : Elim) (t' u' : term),
-      t = E [ₑ t'] -> u = F [ₑ u'] ->
-      exists E' F' : Elim, E' [ₑ t'] ⊳ₕ* u' /\
-                             E = F' ∘ₑ E' /\
-                             F ⊳ₑ* F'.
-Proof.
-intros t u H; induction H; intros.
-Admitted.
+The goal of this section is to prove that SN and reducing to E[n]
+    for some n : nat are properties preserved by lifting only a
+    part of the term. For this, we define the flattening of a
+    term as the term with all free variable merged to 0. We prove
+    that the two properties hold iff they hold on the flattened
+    term, and as it erases lifting, this gives the result we
+    want. *)
 
-Lemma elim_wh_decomp_star : forall (E F : Elim) (t u : term),
-    E [ₑ t] ⊳ₕ* F [ₑ u] ->
-    exists E' F' : Elim, E = F' ∘ₑ E' /\ E' [ₑ t] ⊳ₕ* u.
+Lemma flatten_red : forall (t u : term) (k : nat),
+    t ⊳ₕ u -> flatten t k ⊳ₕ flatten u k.
 Proof.
 Admitted.
 
-Lemma elim_to_var_lift : forall (E : Elim) (t : term)
-                                (k m n : nat),
-    E [ₑ t] ⊳ₕ* {{n}} -> E [ₑ(lift k m t)] ⊳ₕ* lift k m {{n}}.
+Lemma flatten_red_star : forall (t u : term) (k : nat),
+    t ⊳ₕ* u -> flatten t k ⊳ₕ* flatten u k.
+Proof.
+  intros.
+  induction H. apply rt_refl.
+  apply (rt_add _ _ _ _ IHrt_closure).
+  apply flatten_red. apply H0.
+Qed.
+
+Lemma flatten_red_inv_fst : forall (t u : term) (k : nat),
+    flatten t k ⊳ₕ u -> exists v : term,
+      u = flatten v k /\ t ⊳ₕ v.
 Proof.
 Admitted.
+
+Lemma flatten_red_inv_eq : forall (t u : term) (k : nat),
+    t ⊳ₕ* u -> forall v : term,
+      t = flatten v k -> exists w : term,
+        u = flatten w k /\ v ⊳ₕ* w.
+Proof.
+  intros t u k H; induction H; intros.
+  - exists v. split; try apply H. apply rt_refl.
+  - specialize (IHrt_closure v0 H1). destruct IHrt_closure.
+    destruct H2. rewrite H2 in H0.
+    apply flatten_red_inv_fst in H0. destruct H0.
+    exists x0. split; try apply H0. destruct H0.
+    apply (rt_add _ _ _ _ H3 H4).
+Qed.
+
+Lemma flatten_red_inv : forall (t u : term) (k : nat),
+    flatten t k ⊳ₕ* u ->
+    exists v : term, u = flatten v k /\ t ⊳ₕ* v.
+Proof.
+  intros. apply (flatten_red_inv_eq (flatten t k) u k H t
+                   (eq_refl _)).
+Qed.
+
+Lemma flatten_ctx_decomp : forall (E : Elim) (k n : nat)
+                                  (u : term),
+    E [ₑ {{n}}] = flatten u k ->
+    exists (F : Elim) (m : nat), u = F [ₑ {{m}}].
+Proof.
+  induction E; simpl; intros.
+  - assert (exists p : nat, u = {{p}}).
+    induction u; try inversion H. case (n0 <? k) eqn : H2.
+    exists n0; reflexivity. exists n0; reflexivity.
+    destruct H0. exists hole. exists x. simpl. apply H0.
+  - assert (exists v w : term, u = v @ₜ w). 
+    induction u; try inversion H.
+    case (n0 <? k) eqn : H2; inversion H1.
+Admitted.
+
+Lemma flatten_var_ctx : forall (t : term),
+    (exists (E : Elim) (n : nat), t ⊳ₕ* E [ₑ {{n}}]) <->
+      (exists (E : Elim) (n : nat), flatten t 0 ⊳ₕ* E [ₑ {{n}}]).
+Proof.
+  intros. split; intro.
+  destruct H; destruct H. apply (flatten_red_star _ _ 0) in H.
+  rewrite ctx_flatten_comm in H. exists (ctx_flatten x 0).
+  exists 0. replace ({{0}}) with (flatten {{x0}} 0). apply H.
+  reflexivity.
+  destruct H; destruct H.
+  assert (flatten t 0 ⊳ₕ* x [ₑ {{x0}}]); try apply H.
+  apply flatten_red_inv in H0. destruct H0. destruct H0.
+  apply flatten_ctx_decomp in H0. destruct H0.
+  destruct H0. rewrite H0 in H1. exists x2. exists x3.
+  apply H1.
+Qed.
 
 Lemma elim_to_var_ctx_lift :
   forall (E F : Elim) (t : term) (k m n : nat),
@@ -724,13 +1035,8 @@ Lemma elim_to_var_ctx_lift :
     exists (F : Elim) (n' : nat),
       E [ₑ(lift k m t)] ⊳ₕ* F [ₑ{{n'}}].
 Proof.
-  intros.
-  specialize (elim_wh_decomp_star E F t ({{n}}) H); intro.
-  destruct H0; destruct H0.
-  destruct H0. exists x0. exists (if n <? k then n else m + n).
-  replace ({{if n <? k then n else m + n}}) with
-    (lift k m {{n}});
-    try (simpl; case (n <? k); reflexivity). rewrite H0.
-  rewrite compose_fill. apply wh_star_compat.
-  apply elim_to_var_lift. apply H1.
+  intros. apply flatten_var_ctx. rewrite ctx_flatten_comm.
+  rewrite lift_flatten_0. rewrite <- ctx_flatten_comm.
+  apply -> flatten_var_ctx. exists F. exists n.
+  apply H.
 Qed.

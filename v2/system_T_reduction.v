@@ -440,33 +440,6 @@ Proof.
   apply lift_red. apply H0.
 Qed.
 
-Lemma lift_red_rev_eq : forall (t u : term),
-    t ⊳ u -> forall (k n : nat) (v w : term),
-      t = lift k n v -> u = lift k n w -> v ⊳ w.
-Proof.
-intros t u H; induction H; intros; simpl.
-  - assert (Recₜ t1 t2 zero = lift k n v); try apply H.
-    symmetry in H. apply lift_compat_rec in H. destruct H.
-    destruct H. destruct H.
-    rewrite H in H1. simpl in H1. rewrite H0 in H1.
-Admitted.
-
-Lemma lift_red_rev : forall (t u : term) (k n : nat),
-    lift k n t ⊳ lift k n u -> t ⊳ u.
-Proof.
-  intros.
-  specialize (lift_red_rev_eq (lift k n t) (lift k n u)
-                H k n t u); intro.
-  apply H0; reflexivity.
-Qed.
-
-Lemma lift_red_inv : forall (t u : term) (k n : nat),
-    lift k n t ⊳ u -> exists v : term, u = lift k n v.
-Proof.
-  intros. induction t.
-  - inversion H.
-Admitted.
-
 Lemma subst_red_r : forall (t1 t2 u : term), forall (n : nat),
     t1 ⊳ t2 -> {n ~> u} t1 ⊳ {n ~> u} t2.
 Proof.

@@ -151,10 +151,35 @@ Qed.
     then u and v can be written as lift k n u' and
     lift k n v'. *)
 
+Lemma lift_compat_var : forall (t : term) (k n p : nat),
+    lift k n t = {{n}} -> exists m : nat, t = {{m}}.
+Proof.
+  induction t; intros; try inversion H.
+  case (n <? k) eqn : H0. exists n0. apply H1.
+  inversion H1. apply Nat.add_sub_eq_l in H3.
+  exists (n0 - n0). f_equal. symmetry; apply H3.
+Qed.
+
+Lemma lift_compat_zero : forall (t : term) (k n : nat),
+    lift k n t = zero -> t = zero.
+Proof.
+  induction t; intros; try inversion H.
+  - case (n <? k) eqn : H2; inversion H1.
+  - reflexivity.
+Qed.
+
+Lemma lift_compat_star : forall (t : term) (k n : nat),
+    lift k n t = star -> t = star.
+Proof.
+  induction t; intros; try inversion H.
+  - case (n <? k) eqn : H2; inversion H1.
+  - reflexivity.
+Qed.
+
 Lemma lift_compat_abs : forall (t u : term) (k n : nat),
     lift k n t = λₜ u -> exists t' : term, t = λₜ t'.
 Proof.
-induction t; intros; try inversion H.
+  induction t; intros; try inversion H.
   - case (n <? k) eqn : H2; inversion H1.
   - exists t. reflexivity.
 Qed.
@@ -163,7 +188,7 @@ Lemma lift_compat_app : forall (t u v : term) (k n : nat),
     lift k n t = u @ₜ v -> exists u' : term, exists v' : term,
       t = u' @ₜ v'.
 Proof.
-induction t; intros; try inversion H.
+  induction t; intros; try inversion H.
   - case (n <? k) eqn : H2. inversion H1. inversion H1.
   - simpl in H. exists t1. exists t2. inversion H.
     split; reflexivity.

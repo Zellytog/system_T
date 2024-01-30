@@ -177,7 +177,7 @@ Proof.
   split; intros. apply weak_head_rec1. apply H0. apply H.
   split; intros. apply weak_head_rec2. apply H1. apply H.
   apply H0.
-  apply SN_lift_fill. apply H.
+  apply lift_ctx_SN. apply H.
 Qed.
 
 Lemma Bot_is_SAT : saturated_set Bot_SAT.
@@ -274,12 +274,12 @@ Proof.
   apply rec2_0. apply (wh_trans _ _ _ H4 H3).
   unfold Bot_SAT in H. destruct H. destruct H0. destruct H0.
   destruct H0.
-  unfold Bot_SAT. split. apply SN_lift_fill. apply H.
+  unfold Bot_SAT. split. apply lift_ctx_SN. apply H.
   specialize (elim_to_var_ctx_lift E x t k n x0 H1); intro.
   destruct H2; destruct H2. exists x1. exists x2. split;
     try apply H2.
   apply (wh_star_β_star) in H2. apply (SN_SNE _ ({{x2}})).
-  assert (SN (E [ₑ lift k n t])). apply SN_lift_fill. apply H.
+  assert (SN (E [ₑ lift k n t])). apply lift_ctx_SN. apply H.
   apply (reduc_SN_star _ _ H3 H2).
 Qed.
 

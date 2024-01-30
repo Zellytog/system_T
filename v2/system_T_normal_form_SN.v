@@ -685,36 +685,6 @@ Proof.
   intros. apply H0. reflexivity.
 Qed.
 
-(** Stability by lifting: when weakening the context, being SN
-    does not change.*)
-
-Lemma SN_lift_direct : forall (t : term) (k n : nat),
-    SN t -> SN (lift k n t).
-Proof.
-  intros. induction H. split; intros.
-  specialize (lift_red_inv _ _ _ _ H1); intro.
-  destruct H2. rewrite H2. apply H0. rewrite H2 in H1.
-  apply lift_red_rev in H1. apply H1.
-Qed.
-
-Lemma SN_lift_rev : forall (t : term) (k n : nat),
-    SN t -> forall u : term, t = lift k n u -> SN u.
-Proof.
-  intros t k n H; induction H.
-  intros. split; intros. apply (lift_red _ _ k n) in H2.
-  rewrite <- H1 in H2. specialize (H0 _ H2 t2).
-  apply H0. reflexivity.
-Qed.
-
-Lemma SN_lift : forall (t : term) (k n : nat),
-    SN t <-> SN (lift k n t).
-Proof.
-  intros. split; intro.
-  apply SN_lift_direct. apply H.
-  specialize (SN_lift_rev (lift k n t) k n H t); intro.
-  apply H0; reflexivity.
-Qed.
-
 (** Stability by substitution: if t[u/x] is SN, then so is t.*)
 
 Lemma SN_subst_eq : forall (t u : term) (n : nat),
