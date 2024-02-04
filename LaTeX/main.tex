@@ -1,0 +1,1133 @@
+\documentclass{article}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{geometry}
+\usepackage{ebproof}
+\usepackage{stmaryrd}
+\geometry{
+	a4paper,
+	total={170mm,260mm}
+}
+\newcommand{\SN}[0]{\mathcal{SN}}
+\renewcommand{\int}[0]{\texttt{int}}
+\newcommand{\bool}[0]{\texttt{bool}}
+\newcommand{\unit}[0]{\texttt{unit}}
+\newcommand{\void}[0]{\texttt{void}}
+\newcommand{\ife}[3]{\mathrm{if}\;#1\;\mathrm{then}\;#2\;\mathrm{else}\;#3}
+\newcommand{\bO}[0]{\boldsymbol{0}}
+\newcommand{\Ss}[0]{\mathrm{S}}
+\newcommand{\rec}[0]{\mathrm{rec}}
+\newcommand{\Tt}[0]{\top}
+\newcommand{\Ff}[0]{\bot}
+\newcommand{\bN}[0]{\mathbb N}
+\newcommand{\lift}[2]{\uparrow_{#1}^{#2}}
+\newcommand{\deltacase}[3]{\delta(0\mapsto #1\mid 0 \mapsto #2)\;#3}
+\newcommand{\fS}[0]{\mathfrak S}
+\newcommand{\Types}[0]{\mathrm{Types}}
+\newcommand{\Elim}[0]{\mathrm{Elim}}
+\newcommand{\flatten}[2]{\overline{#1}^{#2}}
+\newcommand{\SAT}[0]{\mathcal{SAT}_{\mathcal{SN}}}
+
+\theoremstyle{definition}
+\newtheorem{defi}{Definition}
+\newtheorem{them}{Theorem}
+\newtheorem{cor}{Corollary}
+\newtheorem{prop}{Proposition}[subsection]
+\newtheorem{lem}[prop]{Lemma}
+\newtheorem*{rmk}{Remark}
+
+\title{A formalisation of the strong normalization of system T}
+\author{Titouan Leclercq}
+\date{February 2024}
+
+\begin{document}
+
+\maketitle
+
+\section*{Introduction}
+
+This document is a support to detail the work done in the Coq files. It is not mandatory to understand the
+files, but as a lot of the proofs are long and uninteresting, this document gives a more sensible outline of
+the arguments.
+
+This project is done for the ``programmation fonctionnelle et coq" course of the LMFI master, the aim of
+which
+is to discover the proof assistant Coq. The final project is a formalization project of a chosen proof. In my
+case, I chose to formalize the proof of strong normalization for a typed lambda-calculus with the method of
+reducibility candidates. The 9 files in the \texttt{Source} directory are decomposed in 3 sections:
+\begin{itemize}
+    \item The definitions of the lambda-calculus, the type system and the basic tools
+    \item The main structural results on $\SN$
+    \item The definition of saturated sets, the adequacy theorem and the normalization theorem.
+\end{itemize}
+
+The document will thus naturally be composed of 3 sections, one for each section in the files. As all the
+proofs are formalised in the Coq files, almost no proposition will be proved here, but some important
+argument or technicality may be outline for some propositions.
+
+The structure of the proof was inspired by a course from Colin Riba, called \textit{Preuves et programmes},
+given in the \'ENS de Lyon in 2023 in the M1 Informatique théorique.
+
+\section{First definitions}
+
+\subsection{File 1}
+
+The lambda-calculus we will study is based on Gödel's system T, as described in \textit{e.g.}
+\cite{Girard1989Proofs}, but instead of just using the types $\int$ and $\bool$, we add product and coproduct
+types, along with their nullary cases: $\unit$ and $\void$. We will use De Bruijn indexes as convention to
+manage variables. This means that instead of a variable like $x$, we will use a number telling how many binders
+one has to cross before finding the one binding the variable. The binders are $\lambda$ and $\delta$. If there
+is no binder in a term, for example in the term $\lambda\;1$ then the variable can be bound in an external
+context, as will be the case for types.
+
+\begin{defi}[Terms]
+    The set $\Lambda$ of our $\lambda$-terms is given by the following grammar:
+    \begin{multline*}
+        t,u,v ::= n \mid \lambda\;t\mid t\;u \mid \langle t,u \rangle \mid \pi_1\;t \mid \pi_2\;t\mid 
+        \langle\rangle \mid \kappa_1\;t\mid\kappa_2\;t \mid\delta(0 \mapsto t\mid 0 \mapsto u)\;v\mid
+        \delta_\bot\;t\\ \mid\bO\mid \Ss\;t\mid \rec\;t\;u\;v\mid \Tt\mid\Ff\mid\ife{t}{u}{v}
+    \end{multline*}
+\end{defi}
+
+Next, we want to define the reduction on terms, but this needs a prior step, which is the lifting of terms.
+The idea of lifting is that, if $t$ is interpreted in a context $\Gamma$ binding its free occurrences, it is
+possible to interpret it the same way by adding another context in the middle of $\Gamma$ and changing the
+variables accordingly: if $\Gamma = \Gamma_0 +\!+\Gamma_1$, then taking
+$\Gamma' = \Gamma_0 +\!\!+ \Delta +\!\!+ \Gamma_1$ means that we have to add $|\Delta|$ to each variable which 
+is bigger than $|\Gamma_0|$.
+
+\begin{defi}[Lift]
+    For all $k,n\in\bN$, we define $\lift k n : \Lambda \to \Lambda$ by induction on its argument:
+    \begin{itemize}
+        \item if $t = p$ is a variable and $p < k$ then $\lift k n t = p$
+        \item if $t = p$ is a variable and $p \geq k$ then $\lift k n t = p + n$
+        \item if $t = \lambda\;u$ then $\lift k n t = \lambda\;(\lift {k+1} n u)$
+        \item if $t = \deltacase{u}{v}{w}$ then
+        $\lift k n t = \deltacase{(\lift {k+1} n u)}{(\lift {k+1} n v)}{(\lift k n t)}$
+        \item for the other cases, we just apply inductively $\lift k n$ on each subterm.
+    \end{itemize}
+\end{defi}
+
+There is a way to rewrite two liftings, but we use it mostly when one is starting from 0:
+\begin{lem}
+    For all $t\in \Lambda, k,n,m\in\bN$, we have
+    $$\lift 0 k (\lift n m t) = \lift {k + n} m (\lift 0 k t)$$
+\end{lem}
+
+We can also see that lifting by $0$ amount to doing nothing:
+\begin{lem}
+    For all $t\in \Lambda,k\in\bN$, $\lift k 0 t = t$.
+\end{lem}
+
+Lifting behaves well, leading to lemmas in the Coq file which can be summarized by:
+\begin{prop}
+    For terms $t,u\in\Lambda$, if $u = C(u_1,\ldots,u_p)$ for some term constructor $C$ and terms
+    $u_1,\ldots,u_p$ and $\lift k n t = u$, then $t = C(t_1,\ldots,t_p)$ for some terms $t_1,\ldots,t_p$.
+\end{prop}
+
+\subsection{File 2}
+
+This file concentrate on the substitution operation, its properties, and its extension to simultaneous
+substitution.
+
+\subsubsection{Definition}
+
+In this file, we define the substitution, essential to define the $\beta$-reduction. We use the lift operation
+here for the substitution under a binder: if we want to substitute $k$ with $u$ in $\lambda\;t$, we will need
+the free variables in $u$, which are bound above what we substitute on, to be lifted to add in the context
+the binder $\lambda$.
+
+\begin{defi}[Substitution]
+    Let $t,u\in\Lambda$ and $k\in \bN$. We define $t[u/k]$ (written $\{k \rightsquigarrow u\}\;t$ in the Coq 
+    files) by induction on $t$ :
+    \begin{itemize}
+        \item if $t = k$, then $t[u/k] = u$.
+        \item if $t = n$ with $n < k$, then $t[u/k] = n$.
+        \item if $t = n$ with $n > k$, then $t[u/k] = n - 1$.
+        \item if $t = \lambda\;v$ then $t[u/k] = \lambda\;(v[\lift 0 1 u/k+1])$.
+        \item if $t = \deltacase{v}{w}{x}$ then
+        $t[u/k] = \deltacase{v[\lift 0 1 u/k + 1]}{w[\lift 0 1 u/k + 1]}{x[u/k]}$
+        \item for the rest, we just need to substitute under the subterms.
+    \end{itemize}
+\end{defi}
+
+First, we have two commutation lemmas, between substitution and lifting.
+
+\begin{lem}
+    For all $t,u\in\Lambda, k,n\in \bN$, we have the following:
+    $$\lift k n (t[u/0]) = (\lift {k + 1} n t)[\lift k n u/0]$$
+\end{lem}
+
+\begin{lem}
+    For all $t,u\in\Lambda, k,n\in\bN$, we have the following:
+    $$\lift 0 n (t[u/k]) = \lift 0 n t[\lift 0 n u/n+k]$$
+\end{lem}
+
+Lifting can also absorb substitution.
+
+\begin{lem}
+    For all $t,k\in\Lambda,k\in\bN$, we have the following:
+    $$t = \lift k 1 t[u/k]$$
+\end{lem}
+
+We also have a commutation property between two substitutions.
+
+\begin{prop}
+    For all $t,u,v\in\Lambda,n\in\bN$, we have the following:
+    $$t[v/0][u/n] = t[\lift 0 1 u / n + 1][v[u/n]]$$
+\end{prop}
+
+\subsubsection{Simultaneous substitution}
+
+As seen just before, substituting two terms in some third term gives different result depending on the order
+of the substitution. To avoid that, we define the new notion of simultaneous substitution, which will take
+an arbitrary large finite number of terms and make a substitution in a term with all those at once, without
+the possibility of having a substitution between two substituting terms.
+
+\begin{defi}[Permutation and substitution]
+    We call permutation a list of terms, and write $\fS$ the set of permutations. We define the lift operator
+    on $\fS$ by applying it on each term. It preserves length and has the same properties as the lift
+    operator for terms.
+    
+    For a term $t\in\Lambda$,
+    a permutation $\sigma\in\fS$ and $n\in\bN$, we define $t[\sigma/k]$ (written $\{k\mapsto \sigma\}\;t$ in
+    the Coq files) by induction on $t$ :
+    \begin{itemize}
+        \item if $t = n$ with $n < k$ then $t[\sigma/k] = n$.
+        \item if $t = n$ with $k \leq n < k+|\sigma|$, then $t[\sigma/k] = \sigma_{n-k}$, the $n-k$th term of
+        $\sigma$.
+        \item if $t = n$ with $t \geq k + |\sigma|$ then $t[\sigma/k] = n-|\sigma|$.
+        \item if $t = \lambda\;u$ then $t[\sigma/k] = \lambda\;(t[\lift 0 1 \sigma/k + 1])$.
+        \item for the other constructor, we just apply the substitution recursively, except in the binders of
+        $\delta$ where we lift the permutation and add $1$ to the substitution index, as for the classical
+        substitution.
+    \end{itemize}
+\end{defi}
+
+\begin{rmk}
+    Substituting by the empty list is the identity function and substituting by a singleton list is just a
+    classical substitution.
+\end{rmk}
+
+As for classical substitution, substituting on a sufficiently high lift just reduces the lift.
+\begin{lem}
+    For all $t\in\Lambda, \sigma\in\fS,k\in\bN$ we have the following:
+    $$(\lift k {|\sigma|} t)[\sigma/k] = t$$
+\end{lem}
+
+Given a permutation $\tau = u :: \sigma$, we can decompose $t[\tau/k]$ from the substitution by $u$ and by
+$\sigma$ in two ways: first applying $\sigma$ or first applying $u$.
+\begin{lem}
+    For all $t,u\in\Lambda,\sigma\in\fS,k\in\bN$, we have the following:
+    $$(t[\lift k {|\sigma|} u])[\sigma/k] = t[u::\sigma/k]$$
+\end{lem}
+
+\begin{lem}
+    For all $t,u\in\Lambda,\sigma\in\fS,k\in\bN$, we have the following:
+    $$t[u::\sigma/k] = (t[\lift k 1 \sigma / k + 1])[u/k]$$
+\end{lem}
+
+\subsubsection{Maximal Index}
+
+We now define the maximal index of a term, which is the number of the maximal index among all the free
+variables of a term, ignoring the bound variables (for example, $\lambda\;1$ has as maximal index 0). As we
+want to be able to distinguish between a closed term and a term with maximal index 0, we lift all maximal
+indexes by 1 to keep 0 for the closed terms. The maximal index of a term will be used to prove that, given a
+term $t$, we can take the substitution $\sigma_t := [0;1;\ldots;n]$ for $n$ large enough such that
+$t[\sigma/0] = t$.
+
+\begin{defi}[Maximal index]
+    Let $t \in \Lambda$, we define $\max t$ by induction on $t$:
+    \begin{itemize}
+        \item if $t = n$ then $\max t = 1 + n$
+        \item if $t = \lambda\;u$ then $\max t = (\max u) - 1$
+        \item if $t = \deltacase{u}{v}{w}$ then $\max t = \max((\max u) - 1, (\max v) - 1,\max w)$
+        \item if $t = C(t_1,\ldots,t_p)$ for a term constructor $C$, then
+        $\max t = \max_{i = 1,\ldots,p}(\max t_i)$
+    \end{itemize}
+\end{defi}
+
+Now, we define the permutation $[0;1;\ldots;n]$.
+
+\begin{defi}[Identity permutation]
+    We define the identity permutation of length $n$ as $\sigma_n := [0;\ldots;n]$.
+\end{defi}
+
+\begin{prop}
+    For all $t\in\Lambda$, we have:
+    $$t = t[\sigma_{\max t} / 0]$$
+\end{prop}
+
+\subsection{File 3}
+
+In this file, we study the reduction, first from an abstract perspective with rewriting system theory, then
+we state the basic properties of closure, compatibility and so on, and finally we prove the confluence of the
+reduction using the parallel reduction presented \textit{e.g.} in \cite{sorensen2006lectures}.
+
+\subsubsection{Abstract rewriting system}
+
+We define the classical tools of abstract rewriting systems.
+
+\begin{defi}[Rewriting rule, closures]
+    A rewriting rule is a subset $\to\subseteq \Lambda^2$.
+    
+    For a rule $\to$, we define its transitive closure $\to^+$ as the smallest relation closed under the
+    following rules:
+    \begin{center}
+        \begin{prooftree}
+            \hypo{t \to u}
+            \infer1{t \to^+ u}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{t \to^+ u}
+            \hypo{u \to v}
+            \infer2{t \to^+ v}
+        \end{prooftree}
+    \end{center}
+
+    For a rule $\to$, we define its transitive and reflexive closure $\to^*$ as the smallest relation closed
+    under the following rules:
+    \begin{center}
+        \begin{prooftree}
+            \infer0{t \to^* t}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{t \to^* u}
+            \hypo{u \to v}
+            \infer2{t \to^* v}
+        \end{prooftree}
+    \end{center}
+
+    For a rule $\to$, we define its reflexive, symmetric and transitive closure $\to^\sim$ as the smallest
+    relation closed under the following rules:
+    \begin{center}
+        \begin{prooftree}
+            \infer0{t \to^\sim t}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{t \to^\sim u}
+            \hypo{u \to v}
+            \infer2{t \to^\sim v}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{t \to^\sim u}
+            \hypo{v \to u}
+            \infer2{t \to^\sim v}
+        \end{prooftree}
+    \end{center}
+\end{defi}
+
+\begin{prop}
+    For all rule $\to$, we have $\to \subseteq \to^+ \subseteq \to^* \subseteq \to^*$, the three last are
+    transitive, the two last are reflexive and the last one is symmetric.
+\end{prop}
+
+Now, we define the properties of diamond, local confluence, confluence and Church-Rosser.
+
+\begin{defi}[Diamond, local confluence, confluence, Church-Rosser]
+    Let $\to$ be a rewriting rule. We say that $\to$ has the diamond property if
+    $$\forall t,u,v\in\Lambda, (t \to u) \land (t\to v) \implies \exists w \in\Lambda, (u\to w)\land
+    (v \to w)$$
+
+    It has the local confluence property if
+    $$\forall t,u,v\in\Lambda, (t \to u) \land (t\to v) \implies \exists w \in\Lambda, (u\to^* w)\land
+    (v \to^* w)$$
+
+    It has the confluence property if
+    $$\forall t,u,v\in\Lambda, (t \to^* u) \land (t\to^* v) \implies \exists w \in\Lambda, (u\to^* w)\land
+    (v \to^* w)$$
+
+    It has the Church-Rosser property if
+    $$\forall t,u \in \Lambda, t \to^\sim u \implies \exists v \in\Lambda, (t\to^* v)\land (u \to^* v)$$
+\end{defi}
+
+\begin{lem}
+    Let $\to$ be a rewriting rule. Then $\to$ is confluent if and only if $\to^*$ has the diamond property.
+\end{lem}
+
+\begin{lem}
+    Let $\to$ be a rewriting rule. If $\to$ has the diamond property, then $\to$ has confluence.
+\end{lem}
+
+\begin{lem}
+    Confluence and Church-Rosser property are equivalent.
+\end{lem}
+
+\subsubsection{Beta-reduction}
+
+\begin{defi}[$\beta$-reduction]
+    We define $\rhd\subseteq\Lambda^2$ as the smallest compatible relation (\textit{i.e.} the smallest
+    relation for which $C(t_1,\ldots,t_n) \rhd C(t'_1,\ldots,t'_n)$ for a term constructor $C$ if for all
+    $i$, $t_i=t'_i$ except for one where $t_i \rhd t'_i$) containing the following rules:
+    \begin{center}
+        \begin{prooftree}
+            \infer0{(\lambda\;t)\;u \rhd t[u/0]}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\pi_1\;\langle t,u\rangle\rhd t}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\pi_2\;\langle t,u\rangle\rhd u}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\deltacase{u}{v}{\kappa_1\;t}\rhd u[t/0]}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+        
+        \begin{prooftree}
+            \infer0{\deltacase{u}{v}{\kappa_2\;t}\rhd v[t/0]}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\rec\;u\;v\;\bO\rhd u}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\rec\;u\;v\;(\Ss\;t)\rhd v\;t\;(\rec\;u\;v\;t)}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\ife{\Tt}{u}{v} \rhd u}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+        
+        \begin{prooftree}
+            \infer0{\ife{\Ff}{u}{v} \rhd v}
+        \end{prooftree}
+    \end{center}
+\end{defi}
+
+\begin{prop}
+    As $\rhd$ is compatible, $\rhd^*$ is also compatible.
+\end{prop}
+
+The lift operator commutes with the reduction.
+
+\begin{prop}
+    Let $t,u\in\Lambda,k,n\in\bN$, then:
+    \begin{itemize}
+        \item if $t\rhd u$ then $\lift k n t\;\rhd \lift k n u$
+        \item if $t\rhd^* u$ then $\lift k n t\; \rhd^* \lift k n u$
+    \end{itemize}
+\end{prop}
+
+Substitution commutes with reduction on one side, on the other side a reduction corresponds to (possibly
+empty) sequence of reductions.
+
+\begin{prop}
+    Let $t,u,v\in\Lambda,k\in\bN$, then:
+    \begin{itemize}
+        \item if $t\rhd u$ then $t[v/k]\rhd u[v/k]$
+        \item if $t\rhd^* u$ then $t[v/k] \rhd^* u[v/k]$
+        \item if $u\rhd v$ then $t[u/k]\rhd^* t[v/k]$
+        \item if $t\rhd^* u$ then $t[u/k] \rhd^* t[v/k]$
+    \end{itemize}
+\end{prop}
+
+\subsubsection{Church-Rosser property}
+
+We now prove the Church-Rosser property for $\rhd$.
+
+\begin{defi}[Parallel reduction]
+    We define the relation $\rhd_\|$ as follows:
+    \begin{itemize}
+        \item it is reflexive on variables, $\langle\rangle$, $\bO$, $\Tt$ and $\Ff$.
+        \item instead of simply adding compatibility, we allow ourselves to use the parallel version with
+        $C(t_1,\ldots,t_n)\rhd_\| C(t'_1,\ldots,t'_n)$ with for all $i$, $t_i\rhd_\| t'_i$.
+    \end{itemize}
+\end{defi}
+
+\begin{lem}
+    $\rhd_\|$ is reflexive, and $\rhd\subseteq \rhd_\|\subseteq \rhd^*$.
+\end{lem}
+
+\begin{rmk}
+    With the last inclusions, it is straightforward that $\rhd_\|^* = \rhd^*$.
+\end{rmk}
+
+\begin{lem}
+    For all $t,t',u,u'\in\Lambda,k\in\bN$, if $t\rhd_\| t'$ and $u\rhd_\| u'$, then $t[u/k]\rhd_\| t'[u'/k]$.
+\end{lem}
+
+\begin{defi}[Total reduction]
+    We define the total reduction $t^\bullet$ of $t$ by induction on $t$ by applying each possible parallel
+    redexes appearing in $t$.
+\end{defi}
+
+\begin{lem}
+    For all $t,u\in\Lambda$, if $t\rhd_\| u$ then $u\rhd_\| t^\bullet$.
+\end{lem}
+
+\begin{them}[Church-Rosser]
+    The relation $\rhd_\|$ is diamond, and hence $\rhd$ has the Church-Rosser property.
+\end{them}
+
+\subsection{File 4}
+
+This file focuses on the typing system of our lambda-calculus and proves the subject reduction property.
+
+\begin{defi}[Type, context]
+    We define the set $\Types$ of types by the following grammar:
+    $$T,U ::= X \mid \int\mid\bool\mid\unit\mid\void\mid T \to U \mid T \times U \mid T + U$$
+    where $X$ is a countable set of type variable (taken to be int in the Coq file).
+
+    A typing context is a list of types, we will write $C_T$ the set of typing contexts. For a typing context
+    $\Gamma$, we will write $\Gamma_n$ for its $n$th element.
+\end{defi}
+
+\begin{defi}[Typing relation]
+    We define $(\_\vdash \_ : \_)\subseteq C_T\times \Lambda\times \Types$ by the following rules:
+    \begin{center}
+        \begin{prooftree}
+            \hypo{k < |\Gamma|}
+            \infer1{\Gamma\vdash k : \Gamma_k}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma,T\vdash t : U}
+            \infer1{\Gamma\vdash \lambda\;t : T \to U}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : T \to U}
+            \hypo{\Gamma\vdash u : T}
+            \infer2{\Gamma\vdash t\;u : U}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\Gamma\vdash \bO : \int}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : \int}
+            \infer1{\Gamma\vdash \Ss\;t : \int}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash u : T}
+            \hypo{\Gamma\vdash v : \int\to T \to T}
+            \hypo{\Gamma\vdash t : \int}
+            \infer3{\Gamma\vdash \rec\;u\;v\;t : T}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\Gamma\vdash \Tt : \bool}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+
+        \begin{prooftree}
+            \infer0{\Gamma\vdash \Ff : \bool}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : \bool}
+            \hypo{\Gamma\vdash u : T}
+            \hypo{\Gamma\vdash v : T}
+            \infer3{\Gamma\vdash \ife{t}{u}{v} : T}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : T}
+            \hypo{\Gamma\vdash u : U}
+            \infer2{\Gamma\vdash \langle t,u\rangle : T \times U}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : T\times U}
+            \infer1{\Gamma\vdash \pi_1\;t : T}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : T\times U}
+            \infer1{\Gamma\vdash \pi_2\;t : U}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \infer0{\Gamma\vdash \langle\rangle : \unit}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : T}
+            \infer1{\Gamma\vdash \kappa_1\;t : T + U}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash u : U}
+            \infer1{\Gamma\vdash \kappa_2\;u : T + U}
+        \end{prooftree}
+
+        \vspace{0.5cm}
+
+        \begin{prooftree}
+            \hypo{\Gamma, T\vdash u : V}
+            \hypo{\Gamma, U\vdash v : V}
+            \hypo{\Gamma\vdash t : T + U}
+            \infer3{\Gamma\vdash \deltacase{u}{v}{t} : V}
+        \end{prooftree}
+        \qquad
+        \begin{prooftree}
+            \hypo{\Gamma\vdash t : \void}
+            \infer1{\Gamma\vdash \delta_\bot\;t : T}
+        \end{prooftree}
+    \end{center}
+\end{defi}
+
+\begin{them}[Subject reduction]
+    For all $t,u\in\Lambda, T\in\Types, \Gamma\in C_T$, if $\Gamma\vdash t : T$ and $t\rhd u$ 
+    (resp $t\rhd^* u$) then $\Gamma\vdash u : T$.
+\end{them}
+
+\section{The structure of SN}
+
+This section focuses on the main results which will be used in the final section, to define the interpretation
+of types. First, we need to introduce the notion of elimination context.
+
+\subsection{File 5}
+
+In this file, we define elimination contexts and weak head reduction. The latter is the reduction
+corresponding to the closure by the former.
+
+\subsubsection{Elimination context}
+
+An elimination context can be seen as a way to destruct a term: it will be a sequence of elimination
+procedures with a so-called hole, which can be filled by a term. Eliminators are applications, projections,
+case disjunction on sum types, nullary case on empty type, recursion on natural numbers and case disjunction
+for boolean.
+
+\begin{defi}[Elimiation context, filling]
+    We define the set of Elimination contexts, $\Elim$, by induction with the following grammar:
+    $$E ::= [\;]\mid E\;t\mid \pi_1\;E\mid \pi_2\;E\mid \deltacase{u}{v}{E}\mid \rec\;u\;v\;E\mid
+    \ife{E}{u}{v}\mid \delta_\bot\;E$$
+
+    For a term $t\in\Lambda$, we define $E[t]$ as $E$ where $[\;]$ is replaced by $t$.
+\end{defi}
+
+\begin{prop}
+    Let $E\in\Elim, t,u\in\Lambda$, then:
+    \begin{itemize}
+        \item if $t\rhd u$ then $E[t]\rhd E[u]$.
+        \item if $t \rhd^* u$ then $E[t]\rhd^* E[u]$.
+    \end{itemize}
+\end{prop}
+
+We also define composition of context.
+
+\begin{defi}[Composition]
+    Let $E,F\in\Elim$, we define $E\circ F$ as $E$ where the hole is replaced by $F$.
+\end{defi}
+
+\begin{prop}
+    Composition of context is associative, and it behaves as composition for the following reason:
+    $$\forall E,F\in\Elim, \forall t \in \Lambda, (E\circ F)[t] = E[F[t]]$$
+\end{prop}
+
+We also define $\lift k n$ on contexts and show that this behaves as the usual lift operator. Now, we define
+$\rhd_e$ to be the reduction happening between context.
+
+\begin{defi}[Context reduction]
+    We define $\rhd_e\subseteq \Elim \times \Elim$, the context reduction, by the fact that $E\rhd_e F$ if and
+    only if $E$ and $F$ differ by only a term (say $t_E$ in $E$ and $t_F$ in $F$) such that $t_E\rhd t_F$.
+
+    $\rhd_e^*$ is defined as the reflexive and transitive closure of $\rhd_e$.
+\end{defi}
+
+\begin{prop}
+    $\rhd_e$ commutes with filling: for all $E,F\in\Elim,t\in\Lambda$, if $E\rhd_e F$ (resp $E\rhd_e^* F$)
+    then $E[t]\rhd F[t]$ (resp $E[t]\rhd_e^* F[t]$).
+\end{prop}
+
+\begin{lem}
+    If $n$ is a variable and $E$ an elimination context, then $E[n]$ cannot have the shape of a constructor,
+    \textit{i.e.} is not an abstraction nor a pair, nor a coprojection, nor a constant, nor a successor.
+\end{lem}
+
+\begin{lem}
+    If $E[n]\rhd t$ where $E$ is an elimination context, $n$ a variable and $t$ a term, then $t$ is of the
+    form $F[n]$ with $E\rhd_e F$.
+\end{lem}
+
+\subsubsection{Flattening}
+
+We study here an operation on the terms which just flattens all free variables above some $k$ to $k$. Its
+purpose is to be set to $k = 0$ and to show that some properties $P$ are such that $P(t) \iff
+P(\mathrm{flatten}\;t\;0)$, meaning that changing the free variables in $t$ will not change the belonging in
+$P$ (as flattening gives the same result no matter how one changes the free variables).
+
+\begin{defi}
+    For a term $t \in\Lambda$, we define $\flatten{t}{k}$ to be $t$ where, for each free variable $i$ in $t$,
+    $i$ is replaced by $k$ if $k \leq i$ (taking into account the number of binders) and is left as $i$ if
+    $i < k$.
+\end{defi}
+
+The lemmas after this just show that if $\flatten t k = C(u_1,\ldots,u_p)$ for some $u_1,\ldots,u_p$, then
+$t$ itself is of the form $C(u'_1,\ldots,u'_p)$.
+
+We define in a similar way $\flatten E k$ for a context $E$.
+
+\begin{prop}
+    For all $E\in\Elim, t\in\Lambda$, we have :
+    $$\flatten{E[t]} k = \flatten E k [\flatten t k]$$
+\end{prop}
+
+Next, we prove the essential lemma about flattening:
+
+\begin{lem}
+    For all $t\in\Lambda$, $k,n\in\bN$, we have:
+    $$\flatten {\lift k n t} 0 = \flatten t 0$$
+\end{lem}
+
+In the other direction, we also have a commutation equality.
+
+\begin{lem}
+    For all $t\in\Lambda, k,n,p\in\bN$, if $k \leq p$ then:
+    $$\flatten {\lift k n t} {p + n} = \lift k n (\flatten t p)$$
+\end{lem}
+
+Now, we can show that flattening commutes with substitution:
+
+\begin{prop}
+    For all $k,n\in\bN,t,u\in\Lambda$, if $k \leq n$ then:
+    $$\flatten {t[u/k]} n = \flatten t {n + 1}[\flatten u n / k]$$
+\end{prop}
+
+This leads to the following lemma:
+
+\begin{lem}
+    For all $t,u\in\Lambda, k\in\bN$, if $t\rhd u$ then $\flatten t k \rhd \flatten u k$.
+\end{lem}
+
+\begin{lem}
+    For all $t,u \in\Lambda, k \in \bN$, if $\flatten t k \rhd u$, then $u$ is of the form $\flatten v k$
+    with $t\rhd v$.
+\end{lem}
+
+\subsubsection{Weak head reduction}
+
+The weak head reduction is a weakening of the usual reduction $\rhd$, but where the compatibility is weakened
+to include only elimination contexts.
+
+\begin{defi}[Weak head reduction]
+    We define the relation $\rhd_0$ by the following cases:
+    \begin{itemize}
+        \item $(\lambda\;t)\;u\rhd_0 t[u/0]$
+        \item $\pi_1\;\langle t,u\rangle \rhd_0 t$
+        \item $\pi_2\;\langle t,u\rangle \rhd_0 u$
+        \item $\deltacase{u}{v}{(\kappa_1\;t)}\rhd_0 u[t/0]$
+        \item $\deltacase{u}{v}{(\kappa_2\;t)}\rhd_0 v[t/0]$
+        \item $\rec\;u\;v\;\bO\rhd_0 u$
+        \item $\rec\;u\;v\;(\Ss\;t) \rhd_0 v\;t\;(\rec\;u\;v\;t)$
+        \item $\ife{\Tt}{u}{v} \rhd_0 u$
+        \item $\ife{\Ff}{u}{v} \rhd_0 v$
+    \end{itemize}
+
+    We define the relation $\rhd_h$ as the smallest relation containing $\rhd_0$ and such that for all
+    $t\rhd_h u$ and context $E$, $E[t]\rhd_h E[u]$.
+\end{defi}
+
+\begin{rmk}
+    The definition in the Coq file is inductive, but just follows this idea. We prove just after that the
+    inductive definition is equivalent to the definition we just gave above.
+
+    We have the inclusions $\rhd_0\subseteq \rhd_h\subseteq\rhd$.
+\end{rmk}
+
+\begin{prop}
+    $\rhd_h$ and $\rhd_h^*$ both commute with $\flatten - k$ and $\lift k n$ for all $k,n\in\bN$.
+\end{prop}
+
+\begin{prop}
+    As for $\rhd$, if $\flatten t k \rhd_h u$ then $u$ is of the formm $\flatten v k$ with $t\rhd_h v$.
+\end{prop}
+
+\begin{lem}
+    A term $t$ reduces to some $E[n]$ with $E$ a context and $n$ a variable if and only if $\flatten t k$
+    also reduces to some $E[n]$ (not necessarily the same $E$ and $n$).
+\end{lem}
+
+This leads to one of the main results of this subsection: lifting inside the context does not change the
+property that a term reduces to some $E[n]$ for $E$ a context and $n$ a variable.
+
+\begin{prop}
+    For all $E,F\in\Elim, t\in\Lambda, k,m,n\in\bN$, if $E[t] \rhd_h^* F[n]$ then there exists $F'$ and $n'$
+    such that $E[\lift k m t]\rhd_h^* F [n]$.
+\end{prop}
+
+\begin{proof}
+    From the previous lemma, we know that $E[t] \rhd_h^* F[n]$ for some $F,n$ if and only if it is also the
+    case for $\flatten {E[t]} 0$, \textit{i.e.} if it is also the case for $\flatten E 0 [\flatten t 0]$,
+    but $\flatten t 0 = \flatten {\lift k m t} 0$ and so, as $\flatten E 0 [\flatten t 0]$ reduces to some
+    $F[n]$, so do $E[\lift k m t]$.
+\end{proof}
+
+\subsection{File 6}
+
+This files introduces the set $\SN$ and the notion of normal forms. There is also a part on weakly normalizing
+terms, but this one is not used anyway.
+
+\subsubsection{Normal form}
+
+\begin{defi}[Normal form]
+    We say that $t$ is a normal form if there is no reduction from $t$.
+\end{defi}
+
+\begin{prop}
+    Let $t$ be a normal form and $u$ be such that $t \rhd^* u$, then $t = u$.
+\end{prop}
+
+We give the properties of normal forms.
+
+\begin{prop}
+    For terms $t,u,v$, we have the following:
+    \begin{itemize}
+        \item for all variable $n$, $n$ is a normal form.
+        \item $t$ is a normal form if and only if $\lambda\;t$ is a normal form.
+        \item if $t\;u$ is a normal form, then $t$ and $u$ are both normal forms.
+        \item $\langle t,u\rangle$ is a normal form if and only if both $t$ and $u$ are normal forms.
+        \item if $t$ is a normal form, then $\pi_1\;t$ and $\pi_2\;t$ are normal forms.
+        \item $\Tt,\Ff,\langle\rangle,\bO$ are normal forms.
+        \item $t$ is a normal form if and only if $\kappa_1\;t$ is a normal form, if and only if $\kappa_2\;t$
+        is a normal form.
+        \item if $\deltacase{u}{v}{t}$ is a normal form, then so are $t,u$ and $v$.
+        \item if $\ife{t}{u}{v}$ is a normal form, then so are $t,u$ and $v$.
+        \item if $\rec\;u\;v\;t$ is a normal form, then so are $t,u$ and $v$.
+        \item $t$ is a normal form if and only if $\Ss\;t$ is a normal form.
+        \item $t$ is a normal form if and only if $\delta_\bot\;t$ is a normal form.
+    \end{itemize}
+\end{prop}
+
+We see that, for a constructor, we have an equivalence while it is only an implication for an eliminator, the
+same phenomenon will happen for $\SN$.
+
+\begin{prop}
+    There is unicity of a normal form to which reduces a term: if $t\rhd^* u$, $t\rhd^* v$ and both u and v
+    are normal forms, then $u = v$.
+\end{prop}
+
+\subsubsection{Weakly normalizing terms}
+
+\begin{defi}
+    A term $t$ is weakly normalizing if there exists a normal form $u$ such that $t\rhd^* u$. We write
+    $\mathcal{WN}$ the set of weakly normalizing terms.
+\end{defi}
+
+\begin{prop}
+    A normal form is weakly normalizing. $\mathcal{WN}$ is stable by expansion and reduction by $\rhd$.
+\end{prop}
+
+\subsubsection{Strongly normalizing terms}
+
+\begin{defi}[SN]
+    We define the set $\SN$ of strongly normalizing terms as the smallest set stable under the following rule:
+    \begin{center}
+        \begin{prooftree}
+            \hypo{\forall u \in \Lambda, t\rhd u \implies u \in \SN}
+            \infer1{t\in \SN}
+        \end{prooftree}
+    \end{center}
+\end{defi}
+
+\begin{rmk}
+    A normal form is also strongly normalizing, by emptiness of the set of successors.
+\end{rmk}
+
+The classical characterization that there is no infinite sequence of reduction is a consequence of our
+definition, but is weaker as the equivalence relies on the dependant axiom of choice. The above definition
+also allow to reason by induction.
+
+\begin{prop}
+    If $t\in \SN$, then there is no sequence $(t_n)_{n\in\bN}$ such that $t_0 = t$ and $t_n \rhd t_{n+1}$.
+\end{prop}
+
+\begin{prop}
+    The set $\SN$ is stable by reduction.
+\end{prop}
+
+The other lemmas of this subsubsection are only proof of stability by constructor and eliminators. As for
+normal forms, constructors give an equivalence while eliminators only give an implication.
+
+\begin{prop}
+    If $t[u/k]\in\SN$ for $t,u\in\Lambda,k\in\bN$, then $t\in \SN$.
+\end{prop}
+
+\subsubsection{SN contexts}
+
+We then study interaction between $\SN$ and elimination contexts.
+
+\begin{defi}[SNE]
+    The set $\SN_e$ is the set of contexts made only by terms in $\SN$.
+\end{defi}
+
+\begin{prop}
+    If $E\in\SN_e$ and $E\rhd_e F$ (resp $E\rhd_e^* F$) then $F\in\SN_e$.
+\end{prop}
+
+\begin{prop}
+    For all $E\in\Elim,t\in\Lambda$, if $E[t]\in\SN$ then $E\in\SN_e$ and $t\in\SN$.
+\end{prop}
+
+\begin{rmk}
+    The converse does not work, for example $\lambda\;(0\;0) \in \SN$ and $[\;]\;(\lambda\;(0\;0))\in\SN_e$,
+    but $(\lambda\;(0\;0))\;(\lambda\;(0\;0))$ is not normalizing.
+\end{rmk}
+
+We can also prove one of the important lemmas: $\SN$ is stable by lifting in a restricted way, by changing
+only the variables inside a context.
+
+\begin{lem}
+    For all $E\in\Elim,t\in\Lambda,k,n\in\bN$, we have
+    $$E[t]\in\SN\iff E[\lift k n t]\in\SN$$
+\end{lem}
+
+\begin{cor}
+    $\forall t\in\Lambda, \forall k,n\in\bN, t\in\SN \iff \lift k n t \in \SN$
+\end{cor}
+
+The next lemmas are made to prove the following:
+
+\begin{prop}
+    For all $E\in\SN_e, n\in \bN$, we have $E[n]\in\SN$.
+\end{prop}
+
+\subsection{File 7}
+
+This file proves the weak standardization and weak head expansion.
+
+\begin{them}[Weak standardization]
+    Let $E\in\Elim, t,u,v,w\in\Lambda$, then:
+    \begin{itemize}
+        \item if $E[(\lambda\;t)\;u]\rhd v$ then either $v = E[t[u/0]]$, $v = F[(\lambda\;t)\;u]$ with
+        $E\rhd_e F$, $v = E[(\lambda\;t')\;u]$ with $t \rhd t'$ or $v = E[(\lambda\;t)\;u']$ with $u\rhd u'$.
+        \item if $E[\pi_1\;\langle t,u\rangle]\rhd v$ then either $v = E[t]$,
+        $v = F[\pi_1\;\langle t,u\rangle]$ with $E \rhd_e F$, $v = E[\pi_1\;\langle t',u\rangle]$ with
+        $t \rhd t'$ or $v = E[\pi_1\;\langle t,u'\rangle]$ with $u \rhd u'$.
+        \item if $E[\pi_2\;\langle t,u\rangle]\rhd v$ then either $v = E[u]$,
+        $v = F[\pi_2\;\langle t,u\rangle]$ with $E \rhd_e F$, $v = E[\pi_2\;\langle t',u\rangle]$ with
+        $t \rhd t'$ or $v = E[\pi_2\;\langle t,u'\rangle]$ with $u \rhd u'$.
+        \item if $E[\deltacase{u}{v}{(\kappa_1\;t)}]\rhd w$ then either $w = E[u[t/0]]$,
+        $w = F[\deltacase{u}{v}{(\kappa_1\;t)}]$ with $E \rhd_e F$,
+        $w = E[\deltacase{u}{v}{(\kappa_1\;t')}]$ with
+        $t \rhd t'$, $w = E[\deltacase{u'}{v}{(\kappa_1\;t)}]$ with $u \rhd u'$, or
+        $w = E[\deltacase{u}{v'}{(\kappa_1\;t)}]$ with $v \rhd v'$.
+        \item if $E[\deltacase{u}{v}{(\kappa_2\;t)}]\rhd w$ then either $w = E[v[t/0]]$,
+        $w = F[\deltacase{u}{v}{(\kappa_2\;t)}]$ with $E \rhd_e F$,
+        $w = E[\deltacase{u}{v}{(\kappa_2\;t')}]$ with
+        $t \rhd t'$, $w = E[\deltacase{u'}{v}{(\kappa_2\;t)}]$ with $u \rhd u'$, or
+        $w = E[\deltacase{u}{v'}{(\kappa_2\;t)}]$ with $v \rhd v'$.
+        \item if $E[\rec\;{u}\;{v}\;\bO]\rhd w$ then either $w = E[u]$,
+        $w = F[\rec\;{u}\;{v}\;\bO]$ with $E \rhd_e F$,
+        $w = E[\rec\;{u}\;{v}\;\bO]$ with $u \rhd u'$, or
+        $w = E[\rec\;{u}\;{v}\;\bO]$ with $v \rhd v'$.
+        \item if $E[\rec\;{u}\;{v}\;(\Ss\;t)]\rhd w$ then either $w = E[v\;t\;(\rec\;t\;v\;t)]$,
+        $w = F[\rec\;{u}\;{v}\;(\Ss\;t)]$ with $E \rhd_e F$,
+        $w = E[\rec\;{u}\;{v}\;(\Ss\;t')]$ with $t \rhd t'$,
+        $w = E[\rec\;{u'}\;{v}\;(\Ss\;t)]$ with $u \rhd u'$, or
+        $w = E[\rec\;{u}\;{v'}\;(\Ss\;t)]$ with $v \rhd v'$.
+        \item if $E[\ife{\Tt}{u}{v}] \rhd w$ then either $w = E[u]$,
+        $w = F[\ife{\Tt}{u}{v}]$ with $E \rhd_e F$,
+        $w = E[\ife{\Tt}{u'}{v}]$ with $u \rhd u'$,
+        $w = E[\ife{\Tt}{u'}{v}]$ with $u \rhd u'$.
+        \item if $E[\ife{\Ff}{u}{v}] \rhd w$ then either $w = E[v]$,
+        $w = F[\ife{\Ff}{u}{v}]$ with $E \rhd_e F$,
+        $w = E[\ife{\Ff}{u'}{v}]$ with $u \rhd u'$,
+        $w = E[\ife{\Ff}{u'}{v}]$ with $u \rhd u'$.
+    \end{itemize}
+\end{them}
+
+\begin{them}[Weak head expansion]
+    Let $E\in\Elim, t,u,v,w\in\Lambda$. Then:
+    \begin{itemize}
+        \item if $E[t[u/0]]\in\SN$ and $u\in\SN$, then $E[(\lambda\;t)\;u]\in\SN$.
+        \item if $E[t]\in\SN$ and $u\in\SN$, then $E[\pi_1\;\langle t,u\rangle]\in\SN$.
+        \item if $E[u]\in\SN$ and $t\in\SN$, then $E[\pi_2\;\langle t,u\rangle]\in\SN$.
+        \item if $E[u[t/0]]\in\SN$ and $v\in\SN$, then $E[\deltacase{u}{v}{(\kappa_1\;t)}]\in\SN$.
+        \item if $E[v[t/0]]\in\SN$ and $u\in\SN$, then $E[\deltacase{u}{v}{(\kappa_2\;t)}]\in\SN$.
+        \item if $E[u]\in\SN$ and $v\in\SN$, then $E[\rec\;u\;v\;\bO]\in\SN$.
+        \item if $E[v\;t\;(\rec\;u\;v\;t)]\in\SN$ and $u\in\SN$, then $E[\rec\;u\;v\;(\Ss\;t)]\in\SN$.
+        \item if $E[u]\in\SN$ and $v\in\SN$, then $E[\ife{\Tt}{u}{v}]\in\SN$.
+        \item if $E[v]\in\SN$ and $u\in\SN$, then $E[\ife{\Ff}{u}{v}]\in\SN$.
+    \end{itemize}
+\end{them}
+
+\section{The strong normalization theorem}
+
+\subsection{File 8}
+
+In this file, we define the function $\llbracket-\rrbracket : \Types \to \mathcal P(\Lambda)$ which, to each
+type, will associate a set of terms. The purpose of the proof is to show that
+$$\Gamma\vdash t : T \implies t \in \llbracket T \rrbracket$$
+and that for all $T\in\Types, \llbracket T\rrbracket \subseteq \SN$. With this, we directly deduce that each
+typed term is strongly normalizing.
+
+The definition of $\llbracket-\rrbracket$ will be by induction on the structure of types, so we need for each
+type constructor to make a new set of terms. For this, we will use the elimination rule associated to each
+type. For example,
+$$\llbracket T \to U \rrbracket := \{ t \in \Lambda\mid \forall u \in \llbracket T \rrbracket, t\;u\in
+\llbracket U \rrbracket\}$$
+but to do this, we have two issues:
+\begin{itemize}
+    \item when we want to construct such a definition for \textit{e.g.} $T + U$, we need to quantify over all
+    types, as the type of the eliminator if universally quantified over types. As we are defining the
+    interpretation, we can't use $\llbracket T \rrbracket$ for any $T$ in it. To avoid that, we define a
+    predetermined set $\SAT$ of adequate parts of $\Lambda$, which we call here saturated sets, and for which
+    we will assure that $\llbracket T \rrbracket\in \SAT$.
+    \item to construct the definition of $\llbracket \int \rrbracket$, we furthermore need to be able to call
+    $\llbracket\int\rrbracket$ itself in the definition. To do so, we will use Knaster-Tarski theorem: we can
+    prove that $\SAT$ is a complete lattice, so each increasing function $f : \SAT\to\SAT$ has a fix point.
+    Now, constructing the correct function, we can define $\llbracket \int\rrbracket$ to be a fix point.
+\end{itemize}
+
+This is what motivates our choice of defining the set $\SAT$, but now we need to know what is needed for this
+set to work. The conditions are:
+\begin{itemize}
+    \item saturated sets are parts of $\SN$, so $\forall A \in\SAT, A \subseteq \SN$.
+    \item the set $\{E[n]\mid E\in\SN_e, n\in\bN\}$ must be contained in all saturated sets.
+    \item each saturated set has the saturation property, which is an analogous of the weak head expansion
+    but with the property of being in the set.
+    \item given a saturated set $A\in\SAT$ and $E\in\Elim, t\in\Lambda, k,n\in\bN$, if $E[t]\in A$ then
+    $E[\lift k n t]\in A$.
+\end{itemize}
+
+The first condition is obvious given the structure of our proof. Now, the other three conditions all work
+inside of an elimination context. This is done because, when proving that $\llbracket T \rrbracket \in\SAT$
+for all $T\in\Types$, we precisely enlarge the contexts used in those definitions, because the definition of
+our interpretations will use eliminators. The second condition, then, just assures that each saturated set
+is nonempty, and to do so we use variables (thus, all contexts containing variables). The third condition
+will be used when we prove that $\Gamma\vdash t : T \implies t \in \llbracket T \rrbracket$ to ensure, when
+doing induction on $\Gamma\vdash t : T$, that the induction goes through when $t$ is a constructor (when it
+is an eliminator, the definition of our interpretations directly give the result). The fourth condition
+is used when stating the adequacy theorem later, because we need to be able to lift a context to have
+simultaneous substitutions in our arguments.
+
+\begin{defi}[Saturated set]
+    We define the set $\SAT\subseteq\mathcal P(\Lambda)$ by the fact that $A \in \SAT$ if all the
+    following conditions are met:
+    \begin{itemize}
+        \item $A\subseteq \SN$.
+        \item for all $E\in\SN_e$ and $n\in\bN$, $E[n]\in A$.
+        \item for all $E\in\Elim, t,u\in\Lambda$, if $E[t[u/0]]\in A$ and $u\in\SN$ then
+        $E[(\lambda\;t)\;u]\in A$.
+        \item for all $E\in\Elim, t,u\in\Lambda$, if $E[t]\in A$ and $u\in\SN$, then $E[\pi_1\;\langle
+        t,u\rangle]\in A$.
+        \item for all $E\in\Elim, t,u\in\Lambda$, if $E[u]\in A$ and $t\in\SN$, then $E[\pi_2\;\langle
+        t,u\rangle]\in A$.
+        \item for all $E\in\Elim, t,u,v\in\Lambda$, if $E[u[t/0]]\in A$ and $v\in\SN$, then
+        $E[\deltacase{u}{v}{(\kappa_1\;t)}]\in A$.
+        \item for all $E\in\Elim, t,u,v\in\Lambda$, if $E[v[t/0]]\in A$ and $u\in\SN$, then
+        $E[\deltacase{u}{v}{(\kappa_2\;t)}]\in A$.
+        \item for all $E\in\Elim, u,v\in\Lambda$, if $E[u]\in A$ and $v\in\SN$, then
+        $E[\rec\;u\;v\;\bO]\in A$.
+        \item for all $E\in\Elim, t,u,v\in\Lambda$, if $E[v\;t\;(\rec\;u\;v\;t)]\in A$ and $u\in \SN$, then
+        $E[\rec\;u\;v\;(\Ss\;t)]\in A$.
+        \item for all $E\in\Elim, u,v\in\Lambda$, if $E[u]\in A$ and $v\in\SN$, then
+        $E[\ife{\Tt}{u}{v}]\in A$.
+        \item for all $E\in\Elim, u,v\in\Lambda$, if $E[v]\in A$ and $u\in\SN$, then
+        $E[\ife{\Ff}{u}{v}]\in A$.
+        \item for all $E\in\Elim, t\in\Lambda k,n\in\bN$, if $E[t]\in A$ then $E[\lift k n t]\in A$.
+    \end{itemize}
+\end{defi}
+
+The first result is the stability by weak head expansion: 
+
+\begin{prop}
+    If $A\in \SAT,t\in A,u\in\SN$ and $u\rhd_h^* t$ then $u\in A$.
+\end{prop}
+
+\begin{prop}[$\SAT$ is a complete lattice]
+    The set $\SAT$ is a complete lattice with the order $\subseteq$, with as glb the usual intersection, as
+    lub the usual union, as biggest element $\SN$ and as least element
+    $$\{ t \in \SN\mid \exists E \in \SN_e, \exists n \in \bN, t \rhd_h^* E[n]\}$$
+\end{prop}
+
+After the proofs that $\SAT$ is indeed a complete lattice, we prove the Knaster-Tarski theorem in this
+particular complet lattice.
+
+\begin{them}[Knaster-Tarski]
+    Let $f : \SAT \to \SAT$ be a function such that
+    $$\forall A,B\in\SAT, A\subseteq B \implies f(A)\subseteq f(B)$$
+    then there exists $A \in \SAT$ such that $f(A) = A$.
+\end{them}
+
+To define the interpretation of $\int$, we define the adequate function.
+
+\begin{defi}
+    We define the function $f_\bN : \SAT \to \SAT$ by
+    $$f_\bN(X) = \{ t \in \Lambda \mid \forall A \in \SAT, \forall u\in A, \forall v\in \Lambda,
+    (\forall w \in X, \forall x \in A, v\;w\;x\in A) \implies \rec\;u\;v\;t\in A\}$$
+\end{defi}
+
+\begin{lem}
+    The function $f_\bN$ is an increasing function from $\SAT$ to $\SAT$. It thus have a fix point
+    $A_{f_\bN}$ such that
+    $$\forall t \in \Lambda, t \in A_{f_\bN} \iff \forall A \in \SAT, \forall u \in A, \forall v \in
+    \Lambda, (\forall w \in A_{f_\bN}, \forall x \in A, v \;w\;x\in A) \implies \rec\;u\;v\;t\in A$$
+\end{lem}
+
+Now, we define the interpretation of the types.
+
+\begin{defi}
+    For all $T\in\Types$, we define $\llbracket T \rrbracket$ as follows:
+    \begin{itemize}
+        \item $\llbracket\unit\rrbracket = \SN$
+        \item $\llbracket\void\rrbracket = \{ t \in \SN\mid \exists E \in \SN_e, \exists n \in \bN, t
+        \rhd_h^* E[n]\}$
+        \item $\llbracket\bool\rrbracket = \{ t \in \SN\mid \forall A\in\SAT, \forall u,v\in A,
+        \ife{t}{u}{v}\in A\}$
+        \item $\llbracket\int\rrbracket = A_{f_\bN}$
+        \item $\llbracket T \to U\rrbracket = \{ t \in \Lambda\mid \forall u \in \llbracket T\rrbracket,
+        t\;u\in\llbracket U \rrbracket\}$
+        \item $\llbracket T \times U \rrbracket = \{ t \in \Lambda\mid \pi_1\;t\in T\land \pi_2\;t\in U \}$
+        \item $\llbracket T + U \rrbracket = \{ t \in \Lambda\mid \forall A \in\SAT, \forall u,v\in \Lambda,
+        (\forall w\in \llbracket T\rrbracket, u[w/0]\in A)\land (\forall w\in \llbracket U\rrbracket,
+        v[w/0]\in A) \\\implies \deltacase{u}{v}{t}\in A\}$
+    \end{itemize}
+\end{defi}
+
+\begin{them}[Saturation]
+    $$\forall T \in\Types, \llbracket T \rrbracket \in \SAT$$
+\end{them}
+
+\subsection{File 9}
+
+The file 9 is the last one and describes the adequacy theorem and its consequence, the strong normalization
+theorem.
+
+\begin{defi}[Valid permutation]
+    For a permutation $\sigma\in\fS$ and a typing context $\Gamma$, we say that $\sigma$ is valid with regard
+    to $\Gamma$, written $\sigma\models \Gamma$, if $|\sigma| = |\Gamma|$ and for each $i\in \{0,\ldots,
+    |\sigma|\}$, $\sigma_i \in \llbracket \Gamma_i\rrbracket$.
+\end{defi}
+
+\begin{them}[Adequacy]
+    For all $t\in\Lambda,T\in\Types, \Gamma\in C_T$, if $\sigma\models\Gamma$ and $\Gamma\vdash t : T$
+    then $$t[\sigma/0]\in\llbracket T \rrbracket$$
+\end{them}
+
+But then, as $n\in A$ for all $n\in\bN$ and $A\in \SAT$, this means that $\sigma_{|\Gamma|} \models\Gamma$
+for all $\Gamma\in C_T$. But as we can easily prove that $\Gamma\vdash t : T \implies \max t \leq |\Gamma|$,
+we can show that $t[\sigma_{|\Gamma|}/0]\in \llbracket T\rrbracket$, which is exactly
+$t\in \llbracket T \rrbracket$. Hence the following theorem:
+
+\begin{them}[Strong normalization]
+    For all $t\in\Lambda,T\in\Types,\Gamma\in C_T$, if $\Gamma\vdash t : T$ then $t\in \SN$.
+\end{them}
+
+\bibliographystyle{plain}
+\bibliography{biblio}
+
+\end{document}
